@@ -876,6 +876,33 @@ input {
   text-decoration: underline;
 }
 
+.issue-multi:hover {
+  background: none;
+}
+
+.affected summary {
+  cursor: pointer;
+  color: var(--link);
+  font-size: 0.85rem;
+  margin-top: 4px;
+}
+
+.affected-list {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 4px 16px;
+}
+
+.issue-list .affected-list li {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 0.85rem;
+}
+
 .issue-booking {
   color: var(--link);
   white-space: nowrap;

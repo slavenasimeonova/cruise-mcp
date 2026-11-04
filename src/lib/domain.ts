@@ -69,6 +69,15 @@ export function overbookedExcursionMessage(excursion: Excursion, load: Excursion
   );
 }
 
+/** An overbooked excursion as a single issue, for sailing-level views. */
+export function overbookedExcursionSummary(excursion: Excursion, load: ExcursionLoad, affectedBookings: number): string {
+  return (
+    `${excursion.name} (${excursion.port}, ${excursion.date}) is overbooked: ${load.confirmedGuests} confirmed for ` +
+    `${excursion.capacity} seats (over by ${load.confirmedGuests - excursion.capacity}); affects ${affectedBookings} ` +
+    `booking(s).${excursion.capacityNote ? ` ${excursion.capacityNote}.` : ''}`
+  );
+}
+
 export interface MobilityConflict {
   need: MobilityNeed;
   /** The guest's own mobility request, e.g. "Travels with own mobility scooter". */

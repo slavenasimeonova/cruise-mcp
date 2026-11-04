@@ -51,6 +51,14 @@ describe('overview', () => {
     expect(rows.slice(0, 4).every((r) => r.sailing.daysToDeparture <= 14)).toBe(true);
   });
 
+  it('counts each overbooked excursion as one issue', () => {
+    const np = rows.find((r) => r.sailing.sailingId === 'AH-NP-261104')!;
+    const { totals } = findIssues.run(store, { sailing_id: 'AH-NP-261104' });
+    expect(np.overbookedExcursions).toBe(1);
+    expect(np.issues.total).toBe(totals.issues);
+    expect(np.issues.total).toBe(60 - totals.bookingsOnOverbookedExcursions + 1);
+  });
+
   it('can sort by departure date instead', () => {
     const dates = overviewRows(store, 'departure').map((r) => r.sailing.departureDate);
     expect(dates).toEqual([...dates].sort());
@@ -101,6 +109,10 @@ describe('booking lookup', () => {
       'unconfirmed_excursion',
     ]);
     expect(r.issues[0]!.severity).toBe('high');
+    // The booking page keeps the per-booking wording, identical to get_booking's flag.
+    const overbooked = r.issues.find((i) => i.type === 'overbooked_excursion')!;
+    expect(overbooked.message).toMatch(/^2 guest\(s\) on BK-100054 are confirmed on Aix-en-Provence Half Day/);
+    expect(r.booking.flags).toContain(overbooked.message);
     expect(r.booking.guests.every((g) => g.passport.numberMasked === null || g.passport.numberMasked.startsWith('*'))).toBe(true);
   });
 

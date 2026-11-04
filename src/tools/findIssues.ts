@@ -9,7 +9,7 @@ import {
   isActive,
   isPaymentOverdue,
   mobilityConflict,
-  overbookedExcursionMessage,
+  overbookedExcursionSummary,
   passportCheck,
   requireSailing,
   round2,
@@ -35,7 +35,14 @@ const issueOutput = z.object({
   severity: z.enum(['high', 'medium', 'low']),
   type: z.enum(ISSUE_TYPES),
   message: z.string(),
-  bookingId: z.string().describe('Every issue belongs to one booking.'),
+  bookingId: z
+    .string()
+    .nullable()
+    .describe('The booking this issue belongs to. Null only for overbooked_excursion, which lists affectedBookings instead.'),
+  affectedBookings: z
+    .array(z.object({ bookingId: z.string(), guests: z.number().int() }))
+    .nullable()
+    .describe('overbooked_excursion only: every booking with guests confirmed on the excursion.'),
   passengerId: z.string().nullable(),
   excursionId: z.string().nullable(),
 });
@@ -47,8 +54,9 @@ export const findIssues = defineTool({
   name: 'find_issues',
   title: 'Find operational issues',
   description:
-    'Pre-departure issue check for one sailing, ranked by severity, one row per affected booking. Covers bookings with ' +
-    'guests confirmed on overbooked excursions, missing passports, passports expiring less than 6 months after return, ' +
+    'Pre-departure issue check for one sailing, ranked by severity. Each overbooked excursion is one issue listing the ' +
+    'bookings it affects; every other issue belongs to one booking. Covers overbooked excursions, missing passports, ' +
+    'passports expiring less than 6 months after return, ' +
     'overdue and pending payments, excursion requests still awaiting operator confirmation within 30 days, and guests ' +
     'whose mobility needs conflict with an excursion they are confirmed, requested or waitlisted on.',
   inputSchema: z.object({ sailing_id: sailingIdInput }),
@@ -61,7 +69,8 @@ export const findIssues = defineTool({
       medium: count,
       low: count,
       byType: z.object(Object.fromEntries(ISSUE_TYPES.map((t) => [t, count])) as Record<IssueType, typeof count>),
-      overbookedExcursions: count.describe('Distinct excursions with more confirmed guests than seats.'),
+      overbookedExcursions: count.describe('Excursions with more confirmed guests than seats (one issue each).'),
+      bookingsOnOverbookedExcursions: count.describe('Bookings with guests confirmed on an overbooked excursion.'),
     }),
     issues: z.array(issueOutput),
     summary: z.string(),
@@ -70,13 +79,13 @@ export const findIssues = defineTool({
     const sailing = requireSailing(store, input.sailing_id);
     const daysOut = daysBetween(store.asOf, sailing.departureDate);
     const issues: Issue[] = [];
-    const add = (issue: Omit<Issue, 'passengerId' | 'excursionId'> & Partial<Issue>) =>
-      issues.push({ passengerId: null, excursionId: null, ...issue });
+    const add = (issue: Omit<Issue, 'passengerId' | 'excursionId' | 'affectedBookings'> & Partial<Issue>) =>
+      issues.push({ passengerId: null, excursionId: null, affectedBookings: null, ...issue });
 
-    const overbooked = new Map<string, { excursion: Excursion; load: ExcursionLoad }>();
+    const overbooked = new Map<string, { excursion: Excursion; load: ExcursionLoad; affected: { bookingId: string; guests: number }[] }>();
     for (const ex of store.excursionsForSailing(sailing.id)) {
       const load = excursionLoad(store, ex);
-      if (load.confirmedGuests > ex.capacity) overbooked.set(ex.id, { excursion: ex, load });
+      if (load.confirmedGuests > ex.capacity) overbooked.set(ex.id, { excursion: ex, load, affected: [] });
     }
 
     for (const booking of store.bookingsForSailing(sailing.id)) {
@@ -128,15 +137,7 @@ export const findIssues = defineTool({
         if (!ex) continue;
 
         const over = overbooked.get(ex.id);
-        if (over && xb.status === 'confirmed') {
-          add({
-            severity: 'high',
-            type: 'overbooked_excursion',
-            bookingId: booking.id,
-            excursionId: ex.id,
-            message: overbookedExcursionMessage(ex, over.load, booking.id, xb.passengerIds.length),
-          });
-        }
+        if (over && xb.status === 'confirmed') over.affected.push({ bookingId: booking.id, guests: xb.passengerIds.length });
 
         const daysToExcursion = daysBetween(store.asOf, ex.date);
         if (xb.status === 'requested' && daysToExcursion <= SOON_DAYS) {
@@ -167,22 +168,36 @@ export const findIssues = defineTool({
       }
     }
 
+    // One issue per overbooked excursion; booking pages and get_booking show the per-booking view.
+    for (const { excursion: ex, load, affected } of overbooked.values()) {
+      affected.sort((a, b) => a.bookingId.localeCompare(b.bookingId));
+      add({
+        severity: 'high',
+        type: 'overbooked_excursion',
+        bookingId: null,
+        affectedBookings: affected,
+        excursionId: ex.id,
+        message: overbookedExcursionSummary(ex, load, affected.length),
+      });
+    }
+
     issues.sort(
       (a, b) =>
         SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
         ISSUE_TYPES.indexOf(a.type) - ISSUE_TYPES.indexOf(b.type) ||
         (a.excursionId ?? '').localeCompare(b.excursionId ?? '') ||
-        a.bookingId.localeCompare(b.bookingId) ||
+        (a.bookingId ?? '').localeCompare(b.bookingId ?? '') ||
         (a.passengerId ?? '').localeCompare(b.passengerId ?? ''),
     );
 
     const byType = Object.fromEntries(ISSUE_TYPES.map((t) => [t, issues.filter((i) => i.type === t).length])) as Record<IssueType, number>;
     const high = issues.filter((i) => i.severity === 'high').length;
     const medium = issues.filter((i) => i.severity === 'medium').length;
+    const bookingsOnOverbooked = [...overbooked.values()].reduce((n, o) => n + o.affected.length, 0);
     const breakdown = ISSUE_TYPES.filter((t) => byType[t] > 0)
       .map((t) =>
         t === 'overbooked_excursion'
-          ? `${overbooked.size} overbooked excursion(s) affecting ${byType[t]} booking(s)`
+          ? `${byType[t]} overbooked excursion(s) affecting ${bookingsOnOverbooked} booking(s)`
           : `${byType[t]} ${t.replaceAll('_', ' ')}`,
       )
       .join(', ');
@@ -195,7 +210,15 @@ export const findIssues = defineTool({
     return {
       asOf: store.asOf,
       sailing: sailingRef(store, sailing),
-      totals: { issues: issues.length, high, medium, low: issues.length - high - medium, byType, overbookedExcursions: overbooked.size },
+      totals: {
+        issues: issues.length,
+        high,
+        medium,
+        low: issues.length - high - medium,
+        byType,
+        overbookedExcursions: overbooked.size,
+        bookingsOnOverbookedExcursions: bookingsOnOverbooked,
+      },
       issues,
       summary,
     };

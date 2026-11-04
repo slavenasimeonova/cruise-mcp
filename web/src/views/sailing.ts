@@ -98,14 +98,29 @@ export function sailingView(store: CruiseStore, sailingId: string): View {
             (grp) => html`<details class="issue-group" ${grp.counts.high > 0 ? html`open` : ''}>
               <summary><span class="issue-group-title">${grp.label}</span> ${issueBadges(grp.counts)}</summary>
               <ul class="issue-list">
-                ${grp.items.map(
-                  (i) => html`<li>
-                    <a class="issue-row" href="#/booking/${i.bookingId}" aria-label="${i.severity} severity: ${i.message} Open booking ${i.bookingId}">
-                      ${severityPill(i.severity)}
-                      <span class="issue-msg">${i.message}</span>
-                      <span class="issue-booking mono small">${i.bookingId} →</span>
-                    </a>
-                  </li>`,
+                ${grp.items.map((i) =>
+                  i.bookingId
+                    ? html`<li>
+                        <a class="issue-row" href="#/booking/${i.bookingId}" aria-label="${i.severity} severity: ${i.message} Open booking ${i.bookingId}">
+                          ${severityPill(i.severity)}
+                          <span class="issue-msg">${i.message}</span>
+                          <span class="issue-booking mono small">${i.bookingId} →</span>
+                        </a>
+                      </li>`
+                    : html`<li class="issue-row issue-multi">
+                        ${severityPill(i.severity)}
+                        <span class="issue-msg">${i.message}
+                          <details class="affected">
+                            <summary>Affects ${count(i.affectedBookings?.length ?? 0, 'booking')}</summary>
+                            <ul class="affected-list">
+                              ${(i.affectedBookings ?? []).map(
+                                (b) => html`<li><a class="mono" href="#/booking/${b.bookingId}">${b.bookingId}</a>
+                                  <span class="muted small">${count(b.guests, 'guest')} confirmed</span></li>`,
+                              )}
+                            </ul>
+                          </details>
+                        </span>
+                      </li>`,
                 )}
               </ul>
             </details>`,

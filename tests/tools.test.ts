@@ -1,6 +1,6 @@
 // Pure query tests: each tool's run() against the seeded dataset, without MCP in the way.
 import { describe, expect, it } from 'vitest';
-import { isActive, passportCheck } from '../src/lib/domain.js';
+import { excursionLoad, isActive, overbookedExcursionMessage, passportCheck } from '../src/lib/domain.js';
 import { ToolInputError } from '../src/lib/errors.js';
 import { excursionAvailability } from '../src/tools/excursionAvailability.js';
 import { findIssues } from '../src/tools/findIssues.js';
@@ -108,7 +108,17 @@ describe('get_booking', () => {
     expect(shared.some((i) => i.type === 'accessibility_conflict')).toBe(true);
     expect(shared.some((i) => i.type === 'overbooked_excursion')).toBe(true);
     for (const issue of shared) {
-      expect(getBooking.run(store, { booking_id: issue.bookingId }).flags).toContain(issue.message);
+      if (issue.type === 'accessibility_conflict') {
+        expect(getBooking.run(store, { booking_id: issue.bookingId! }).flags).toContain(issue.message);
+        continue;
+      }
+      // One sailing-level issue; each affected booking flags its own share with the shared wording.
+      const ex = store.excursion(issue.excursionId!)!;
+      for (const { bookingId, guests } of issue.affectedBookings!) {
+        expect(getBooking.run(store, { booking_id: bookingId }).flags).toContain(
+          overbookedExcursionMessage(ex, excursionLoad(store, ex), bookingId, guests),
+        );
+      }
     }
   });
 
@@ -267,20 +277,36 @@ describe('find_issues', () => {
     expect(out.issues.some((i) => i.bookingId !== null && inactive.has(i.bookingId))).toBe(false);
   });
 
-  it('ties every issue to a booking, and reports each overbooked excursion once per confirmed booking', () => {
-    expect(out.issues.every((i) => /^BK-\d{6}$/.test(i.bookingId))).toBe(true);
+  it('counts each overbooked excursion once and lists every booking it affects', () => {
     const overbookedRows = out.issues.filter((i) => i.type === 'overbooked_excursion');
-    const excursionIds = new Set(overbookedRows.map((i) => i.excursionId));
-    expect(out.totals.overbookedExcursions).toBe(excursionIds.size);
-    for (const exId of excursionIds) {
-      const confirmedBookings = store
-        .excursionBookingsForExcursion(exId!)
-        .filter((xb) => xb.status === 'confirmed' && isActive(store.booking(xb.bookingId)!))
-        .map((xb) => xb.bookingId)
-        .sort();
-      expect(overbookedRows.filter((i) => i.excursionId === exId).map((i) => i.bookingId).sort()).toEqual(confirmedBookings);
+    expect(overbookedRows).toHaveLength(1);
+    expect(new Set(overbookedRows.map((i) => i.excursionId)).size).toBe(overbookedRows.length);
+    expect(out.totals.byType.overbooked_excursion).toBe(1);
+    expect(out.totals.overbookedExcursions).toBe(1);
+
+    const row = overbookedRows[0]!;
+    expect(row.bookingId).toBeNull();
+    const confirmed = store
+      .excursionBookingsForExcursion(row.excursionId!)
+      .filter((xb) => xb.status === 'confirmed' && isActive(store.booking(xb.bookingId)!))
+      .map((xb) => ({ bookingId: xb.bookingId, guests: xb.passengerIds.length }))
+      .sort((a, b) => a.bookingId.localeCompare(b.bookingId));
+    expect(row.affectedBookings).toEqual(confirmed);
+    expect(out.totals.bookingsOnOverbookedExcursions).toBe(confirmed.length);
+    expect(row.message).toContain(`affects ${confirmed.length} booking(s)`);
+    expect(out.summary).toContain(`1 overbooked excursion(s) affecting ${confirmed.length} booking(s)`);
+  });
+
+  it('ties every other issue to exactly one booking, and totals count rows', () => {
+    for (const i of out.issues) {
+      if (i.type === 'overbooked_excursion') expect(i.affectedBookings!.length).toBeGreaterThan(0);
+      else {
+        expect(i.bookingId).toMatch(/^BK-\d{6}$/);
+        expect(i.affectedBookings).toBeNull();
+      }
     }
-    expect(out.summary).toMatch(/1 overbooked excursion\(s\) affecting \d+ booking\(s\)/);
+    expect(out.totals.issues).toBe(out.issues.length);
+    expect(out.summary.startsWith(`${out.issues.length} issue(s)`)).toBe(true);
   });
 
   it('finds accessibility conflicts somewhere in the fleet', () => {

@@ -3,6 +3,7 @@
 // No DOM access here, so this module is unit-tested in Node.
 import type * as z from 'zod/v4';
 import type { CruiseStore } from '../../src/data/store.js';
+import { excursionLoad, overbookedExcursionMessage } from '../../src/lib/domain.js';
 import { ToolInputError } from '../../src/lib/errors.js';
 import { excursionAvailability } from '../../src/tools/excursionAvailability.js';
 import { findIssues } from '../../src/tools/findIssues.js';
@@ -23,7 +24,7 @@ export type BookingOutput = z.output<typeof getBooking.outputSchema>;
 export const SEVERITIES: readonly Severity[] = ['high', 'medium', 'low'];
 
 export const ISSUE_LABELS: Record<IssueType | BookingNoteType, string> = {
-  overbooked_excursion: 'Confirmed on overbooked excursions',
+  overbooked_excursion: 'Overbooked excursions',
   missing_passport: 'Missing passports',
   passport_expiry: 'Passports expiring too soon',
   overdue_payment: 'Overdue payments',
@@ -158,9 +159,17 @@ export function lookupBooking(store: CruiseStore, input: string): BookingLookup 
     throw err;
   }
 
-  const own = findIssues.run(store, { sailing_id: booking.sailing.sailingId }).issues.filter((i) => i.bookingId === id);
+  const own = findIssues
+    .run(store, { sailing_id: booking.sailing.sailingId })
+    .issues.filter((i) => i.bookingId === id || i.affectedBookings?.some((b) => b.bookingId === id));
   const reportedExcursions = new Set(own.filter((i) => i.type === 'unconfirmed_excursion').map((i) => i.excursionId));
-  const issues: BookingIssue[] = own.map(({ severity, type, message }) => ({ severity, type, message }));
+  const issues: BookingIssue[] = own.map(({ severity, type, message, excursionId, affectedBookings }) => {
+    if (type !== 'overbooked_excursion') return { severity, type, message };
+    // Sailing views count the excursion once; a booking page shows this booking's share, worded as get_booking flags it.
+    const ex = store.excursion(excursionId!)!;
+    const guests = affectedBookings!.find((b) => b.bookingId === id)!.guests;
+    return { severity, type, message: overbookedExcursionMessage(ex, excursionLoad(store, ex), id, guests) };
+  });
 
   const status = booking.booking.status;
   if (status === 'cancelled') {
