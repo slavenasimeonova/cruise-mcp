@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // stdio entry point. stdout carries MCP messages only; all logging goes to stderr.
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
-import { loadStore } from './data/store.js';
+import { loadStore } from './data/load.js';
 import { createServer, SERVER_NAME, SERVER_VERSION } from './server.js';
 
 try {

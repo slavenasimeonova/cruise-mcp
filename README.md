@@ -39,7 +39,7 @@ There is no write path in the code. Each returns `structuredContent` (validated 
 | `find_unconfirmed_excursions` | `sailing_id`, `port?` | Excursion requests that are `requested` (awaiting the operator) or `waitlisted`, with urgency |
 | `excursion_availability` | `sailing_id`, `port` | Per excursion at a port: capacity, confirmed / requested / waitlisted guests, seats left, overbooked flag |
 | `passenger_summary` | `sailing_id` | Guests by booking status, occupancy, loyalty tiers, cabins, nationalities, documents, payments, every special request |
-| `find_issues` | `sailing_id` | Severity-ranked issue list: overbooked excursions, missing / expiring passports, overdue & pending payments, unconfirmed excursions ≤ 30 days out, accessibility conflicts |
+| `find_issues` | `sailing_id` | Severity-ranked issues, one row per affected booking: guests confirmed on overbooked excursions, missing / expiring passports, overdue & pending payments, unconfirmed excursions ≤ 30 days out, mobility needs that conflict with a confirmed, requested or waitlisted excursion |
 
 **Input handling:**
 - IDs and dates are validated by schema (`AH-CV-261107`, `BK-100001`, real calendar dates).
@@ -123,6 +123,27 @@ is a shortcut for the same command.
    Calls `passenger_summary`.
 5. **"Look up booking BK-100226. What does this guest still need to do before sailing?"**
    Calls `get_booking`: a missing passport for one guest, a coeliac dietary request, one tour awaiting confirmation and two waitlisted.
+   (For BK-100054, it also flags a wheelchair user booked on two tours that aren't accessible.)
+
+## Web dashboard
+
+`web/` holds a read-only operations dashboard for the same data: a static site with no server and no API calls, deployed to
+GitHub Pages. It bundles the MCP server's own tool functions (`src/tools/*`) and runs them in the browser, so every
+number on the page is exactly what Claude gets over MCP.
+
+- **Overview**: upcoming sailings sorted by urgency, with issue badges and occupancy.
+- **Sailing detail**: passenger summary, excursion capacity bars (overbooked shown in red), and issues grouped by type with severity filters.
+- **Booking lookup**: every open item for one booking in one place (try `BK-100054`).
+- **Ask Claude**: example questions with the exact tool calls and server responses.
+
+The published dataset is a copy with passport numbers already masked (`web/scripts/export-data.ts`). The build fails if any
+raw number would be published.
+
+```powershell
+npm.cmd run web:dev       # local dev server
+npm.cmd run web:build     # production build into web/dist
+npm.cmd run web:preview   # serve the production build at http://localhost:4173
+```
 
 ## Project layout
 
@@ -131,10 +152,15 @@ src/
   index.ts                 stdio entry (serveStdio, serves 2025- and 2026-era MCP clients)
   server.ts                createServer(store): registers the six tools
   data/types.ts            dataset types
-  data/store.ts            loads data/cruise.json once, builds lookup indexes (read-only)
-  lib/domain.ts            business rules: active bookings, passport validity, port/ship name matching
+  data/store.ts            in-memory lookup indexes (read-only, runs in Node and the browser)
+  data/load.ts             reads data/cruise.json from disk (Node only)
+  lib/domain.ts            business rules: active bookings, passport validity, accessibility, name matching
   lib/dates.ts             UTC calendar-date helpers
   tools/*.ts               one file per tool: input/output Zod schemas + pure run() query
+web/
+  index.html, src/         dashboard (Vite + TypeScript, no framework), hash-routed views
+  scripts/export-data.ts   writes the masked public dataset for the site
+.github/workflows/pages.yml  builds and deploys the dashboard to GitHub Pages
 scripts/
   generate.ts              deterministic dataset generator (seeded PRNG)
   seed.ts                  writes data/cruise.json
@@ -142,6 +168,7 @@ tests/
   seed.test.ts             determinism, committed-file match, referential integrity, planted problems
   tools.test.ts            each tool's query logic against the seeded data
   mcp.test.ts              real MCP client over in-memory transport + a stdio child-process test
+  web.test.ts              dashboard logic, HTML escaping, and the no-raw-passport-numbers check
 ```
 
 ## Testing

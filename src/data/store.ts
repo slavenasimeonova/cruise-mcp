@@ -1,10 +1,7 @@
-// Read-only, in-memory view of data/cruise.json with lookup indexes. There are no write paths.
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+// Read-only, in-memory view of the cruise dataset with lookup indexes. There are no write paths.
+// Platform-neutral: the MCP server (Node) and the web dashboard (browser) both use it.
+// Loading from disk lives in load.ts.
 import type { Booking, Dataset, Excursion, ExcursionBooking, Passenger, Sailing, Ship } from './types.js';
-
-/** Resolves to <project>/data/cruise.json from both src/data (tsx, tests) and dist/data (built). */
-export const DEFAULT_DATA_FILE = fileURLToPath(new URL('../../data/cruise.json', import.meta.url));
 
 function groupBy<T>(items: readonly T[], key: (item: T) => string): Map<string, T[]> {
   const map = new Map<string, T[]>();
@@ -93,16 +90,11 @@ export class CruiseStore {
   }
 }
 
-export function loadStore(file = DEFAULT_DATA_FILE): CruiseStore {
-  let raw: string;
-  try {
-    raw = readFileSync(file, 'utf8');
-  } catch (err) {
-    throw new Error(`Cannot read cruise data at ${file}. Run "npm run seed" to generate it. (${(err as Error).message})`);
+/** Builds a store from parsed JSON, rejecting anything that is not a schemaVersion 1 dataset. */
+export function storeFromJson(data: unknown, source: string): CruiseStore {
+  const d = data as Partial<Dataset> | null;
+  if (d?.meta?.schemaVersion !== 1 || !Array.isArray(d.sailings) || !Array.isArray(d.bookings)) {
+    throw new Error(`${source} is not a schemaVersion 1 cruise dataset. Run "npm run seed" to regenerate it.`);
   }
-  const data = JSON.parse(raw) as Partial<Dataset>;
-  if (data.meta?.schemaVersion !== 1 || !Array.isArray(data.sailings) || !Array.isArray(data.bookings)) {
-    throw new Error(`${file} is not a schemaVersion 1 cruise dataset. Run "npm run seed" to regenerate it.`);
-  }
-  return new CruiseStore(data as Dataset);
+  return new CruiseStore(d as Dataset);
 }

@@ -1,5 +1,5 @@
 import { Client, InMemoryTransport, type CallToolResult } from '@modelcontextprotocol/client';
-import { loadStore } from '../src/data/store.js';
+import { loadStore } from '../src/data/load.js';
 import { createServer } from '../src/server.js';
 
 export const store = loadStore();

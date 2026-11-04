@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { generateDataset, serializeDataset } from '../scripts/generate.js';
-import { DEFAULT_DATA_FILE } from '../src/data/store.js';
+import { DEFAULT_DATA_FILE } from '../src/data/load.js';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const dataset = generateDataset();

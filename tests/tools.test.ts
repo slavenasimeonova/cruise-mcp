@@ -80,6 +80,30 @@ describe('get_booking', () => {
     expect(out.flags.some((f) => f.includes('overdue'))).toBe(true);
   });
 
+  it('flags exactly the accessibility and overbooking issues find_issues reports, word for word', () => {
+    const shared = store.sailings
+      .flatMap((s) => findIssues.run(store, { sailing_id: s.id }).issues)
+      .filter((i) => i.type === 'accessibility_conflict' || i.type === 'overbooked_excursion');
+    expect(shared.some((i) => i.type === 'accessibility_conflict')).toBe(true);
+    expect(shared.some((i) => i.type === 'overbooked_excursion')).toBe(true);
+    for (const issue of shared) {
+      expect(getBooking.run(store, { booking_id: issue.bookingId }).flags).toContain(issue.message);
+    }
+  });
+
+  it("describes the guest's own mobility aid", () => {
+    const out = getBooking.run(store, { booking_id: 'BK-100054' });
+    const conflicts = out.flags.filter((f) => f.includes('Mobility request'));
+    expect(conflicts).toHaveLength(2);
+    for (const f of conflicts) expect(f).toMatch(/^Jasmine Castellano is confirmed on .*Mobility request: "Travels with own mobility scooter"\.$/);
+    expect(out.flags.some((f) => f.includes('(wheelchair)'))).toBe(false);
+  });
+
+  it('flags a booking confirmed on an overbooked excursion', () => {
+    const out = getBooking.run(store, { booking_id: 'BK-100054' });
+    expect(out.flags).toContainEqual(expect.stringMatching(/^2 guest\(s\) on BK-100054 are confirmed on Aix-en-Provence Half Day .*overbooked: 40 confirmed for 32 seats/));
+  });
+
   it('shows cancelled bookings without a cabin', () => {
     const b = store.bookingsForSailing(NEXT_SAILING.id).find((x) => x.status === 'cancelled')!;
     const out = getBooking.run(store, { booking_id: b.id });
@@ -220,6 +244,22 @@ describe('find_issues', () => {
   it('ignores cancelled and waitlisted bookings', () => {
     const inactive = new Set(store.bookingsForSailing(NEXT_SAILING.id).filter((b) => !isActive(b)).map((b) => b.id));
     expect(out.issues.some((i) => i.bookingId !== null && inactive.has(i.bookingId))).toBe(false);
+  });
+
+  it('ties every issue to a booking, and reports each overbooked excursion once per confirmed booking', () => {
+    expect(out.issues.every((i) => /^BK-\d{6}$/.test(i.bookingId))).toBe(true);
+    const overbookedRows = out.issues.filter((i) => i.type === 'overbooked_excursion');
+    const excursionIds = new Set(overbookedRows.map((i) => i.excursionId));
+    expect(out.totals.overbookedExcursions).toBe(excursionIds.size);
+    for (const exId of excursionIds) {
+      const confirmedBookings = store
+        .excursionBookingsForExcursion(exId!)
+        .filter((xb) => xb.status === 'confirmed' && isActive(store.booking(xb.bookingId)!))
+        .map((xb) => xb.bookingId)
+        .sort();
+      expect(overbookedRows.filter((i) => i.excursionId === exId).map((i) => i.bookingId).sort()).toEqual(confirmedBookings);
+    }
+    expect(out.summary).toMatch(/1 overbooked excursion\(s\) affecting \d+ booking\(s\)/);
   });
 
   it('finds accessibility conflicts somewhere in the fleet', () => {

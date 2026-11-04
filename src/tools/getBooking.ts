@@ -1,10 +1,14 @@
 import * as z from 'zod/v4';
 import { ageOn } from '../lib/dates.js';
 import {
+  accessibilityConflictMessage,
+  excursionLoad,
   fullName,
   isActive,
   isPaymentOverdue,
   maskPassportNumber,
+  mobilityConflict,
+  overbookedExcursionMessage,
   passportCheck,
   requireSailing,
   round2,
@@ -123,6 +127,17 @@ export const getBooking = defineTool({
         if (!ex) throw new Error(`Dataset integrity error: excursion ${xb.excursionId} not found`);
         if (xb.status === 'requested') flags.push(`${ex.name} (${ex.port}, ${ex.date}) awaiting operator confirmation`);
         if (xb.status === 'waitlisted') flags.push(`${ex.name} (${ex.port}, ${ex.date}) waitlisted at position ${xb.waitlistPosition}`);
+        // Same rules and wording as find_issues, so both tools report these identically.
+        if (isActive(booking)) {
+          if (xb.status === 'confirmed') {
+            const load = excursionLoad(store, ex);
+            if (load.confirmedGuests > ex.capacity) flags.push(overbookedExcursionMessage(ex, load, booking.id, xb.passengerIds.length));
+          }
+          for (const p of passengers.filter((x) => xb.passengerIds.includes(x.id))) {
+            const conflict = mobilityConflict(p, ex);
+            if (conflict) flags.push(accessibilityConflictMessage(p, ex, xb.status, conflict));
+          }
+        }
         return {
           excursionBookingId: xb.id,
           excursionId: ex.id,

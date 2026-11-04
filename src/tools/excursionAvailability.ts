@@ -1,35 +1,9 @@
 import * as z from 'zod/v4';
-import type { CruiseStore } from '../data/store.js';
-import type { Excursion } from '../data/types.js';
-import { isActive, requireSailing, resolvePortOfCall } from '../lib/domain.js';
+import { excursionLoad, requireSailing, resolvePortOfCall } from '../lib/domain.js';
 import { defineTool, portInput, sailingIdInput, sailingRef, sailingRefOutput } from './shared.js';
 
 /** Seats left at or below this count are reported as "limited". */
 const LIMITED_SEATS = 5;
-
-export interface ExcursionLoad {
-  confirmedGuests: number;
-  requestedGuests: number;
-  waitlistedGuests: number;
-  waitlistRequests: number;
-}
-
-/** Guest counts per status for an excursion, ignoring bookings that will not sail. */
-export function excursionLoad(store: CruiseStore, excursion: Excursion): ExcursionLoad {
-  const load: ExcursionLoad = { confirmedGuests: 0, requestedGuests: 0, waitlistedGuests: 0, waitlistRequests: 0 };
-  for (const xb of store.excursionBookingsForExcursion(excursion.id)) {
-    const booking = store.booking(xb.bookingId);
-    if (!booking || !isActive(booking)) continue;
-    const guests = xb.passengerIds.length;
-    if (xb.status === 'confirmed') load.confirmedGuests += guests;
-    else if (xb.status === 'requested') load.requestedGuests += guests;
-    else {
-      load.waitlistedGuests += guests;
-      load.waitlistRequests += 1;
-    }
-  }
-  return load;
-}
 
 export const excursionAvailability = defineTool({
   name: 'excursion_availability',

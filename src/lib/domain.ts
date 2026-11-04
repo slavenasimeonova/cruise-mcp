@@ -1,6 +1,15 @@
 // Business rules and lookups shared by the tools.
 import type { CruiseStore } from '../data/store.js';
-import type { Booking, ItineraryDay, Passenger, Sailing, Ship } from '../data/types.js';
+import type {
+  Booking,
+  Excursion,
+  ExcursionBookingStatus,
+  ItineraryDay,
+  MobilityNeed,
+  Passenger,
+  Sailing,
+  Ship,
+} from '../data/types.js';
 import { addMonths, daysBetween } from './dates.js';
 import { ToolInputError } from './errors.js';
 
@@ -25,6 +34,71 @@ export function passportCheck(passenger: Passenger, sailing: Sailing): PassportC
   const { passport } = passenger;
   if (passport.status === 'missing' || passport.expiryDate === null) return 'missing';
   return passport.expiryDate < addMonths(sailing.returnDate, PASSPORT_VALIDITY_MONTHS) ? 'expires_too_soon' : 'valid';
+}
+
+export interface ExcursionLoad {
+  confirmedGuests: number;
+  requestedGuests: number;
+  waitlistedGuests: number;
+  waitlistRequests: number;
+}
+
+/** Guest counts per status for an excursion, ignoring bookings that will not sail. */
+export function excursionLoad(store: CruiseStore, excursion: Excursion): ExcursionLoad {
+  const load: ExcursionLoad = { confirmedGuests: 0, requestedGuests: 0, waitlistedGuests: 0, waitlistRequests: 0 };
+  for (const xb of store.excursionBookingsForExcursion(excursion.id)) {
+    const booking = store.booking(xb.bookingId);
+    if (!booking || !isActive(booking)) continue;
+    const guests = xb.passengerIds.length;
+    if (xb.status === 'confirmed') load.confirmedGuests += guests;
+    else if (xb.status === 'requested') load.requestedGuests += guests;
+    else {
+      load.waitlistedGuests += guests;
+      load.waitlistRequests += 1;
+    }
+  }
+  return load;
+}
+
+/** One booking's confirmed guests on an excursion that has more confirmed guests than seats. */
+export function overbookedExcursionMessage(excursion: Excursion, load: ExcursionLoad, bookingId: string, guests: number): string {
+  return (
+    `${guests} guest(s) on ${bookingId} are confirmed on ${excursion.name} (${excursion.port}, ${excursion.date}), ` +
+    `which is overbooked: ${load.confirmedGuests} confirmed for ${excursion.capacity} seats ` +
+    `(over by ${load.confirmedGuests - excursion.capacity}).${excursion.capacityNote ? ` ${excursion.capacityNote}.` : ''}`
+  );
+}
+
+export interface MobilityConflict {
+  need: MobilityNeed;
+  /** The guest's own mobility request, e.g. "Travels with own mobility scooter". */
+  detail: string;
+  /** Why the excursion is unsuitable, e.g. "not wheelchair accessible and strenuous". */
+  reason: string;
+}
+
+/** Whether this excursion is unsuitable for the guest's mobility need (not accessible, or too strenuous). */
+export function mobilityConflict(passenger: Passenger, excursion: Excursion): MobilityConflict | null {
+  const request = passenger.specialRequests.find((r) => r.type === 'mobility' && r.mobilityNeed !== null);
+  if (!request?.mobilityNeed) return null;
+  const reasons: string[] = [];
+  if (request.mobilityNeed === 'wheelchair' && !excursion.wheelchairAccessible) reasons.push('not wheelchair accessible');
+  if (excursion.activityLevel === 'strenuous') reasons.push('strenuous');
+  // Strenuous alone is a conflict for limited walking; for wheelchair users only inaccessibility is.
+  const conflict = request.mobilityNeed === 'wheelchair' ? !excursion.wheelchairAccessible : excursion.activityLevel === 'strenuous';
+  return conflict ? { need: request.mobilityNeed, detail: request.detail, reason: reasons.join(' and ') } : null;
+}
+
+export function accessibilityConflictMessage(
+  passenger: Passenger,
+  excursion: Excursion,
+  status: ExcursionBookingStatus,
+  conflict: MobilityConflict,
+): string {
+  return (
+    `${fullName(passenger)} is ${status} on ${excursion.name} (${excursion.port}, ${excursion.date}), ` +
+    `which is ${conflict.reason}. Mobility request: "${conflict.detail}".`
+  );
 }
 
 export function maskPassportNumber(number: string | null): string | null {

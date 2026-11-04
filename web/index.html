@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Azure Horizon Cruises Ops</title>
+    <meta name="description" content="Read-only ship operations dashboard for Azure Horizon Cruises, a fictional cruise line. Same data and query code as the cruise-mcp server for Claude." />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b5cad'/%3E%3Cpath d='M6 20c3 2.5 6 2.5 10 0s7-2.5 10 0' stroke='white' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3Cpath d='M10 16l6-8 6 8z' fill='white'/%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <a class="skip" href="#app">Skip to content</a>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="#/">
+          <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect width="32" height="32" rx="7" fill="currentColor" /><path d="M6 20c3 2.5 6 2.5 10 0s7-2.5 10 0" stroke="var(--brand-ink)" stroke-width="2.4" fill="none" stroke-linecap="round" /><path d="M10 16l6-8 6 8z" fill="var(--brand-ink)" /></svg>
+          <span><strong>Azure Horizon</strong> <span class="brand-sub">Ship Operations</span></span>
+        </a>
+        <nav class="site-nav" aria-label="Main">
+          <a href="#/" data-nav="overview">Overview</a>
+          <a href="#/booking" data-nav="booking">Booking lookup</a>
+          <a href="#/ask" data-nav="ask">Ask Claude</a>
+        </nav>
+      </div>
+      <div class="banner">
+        <div class="container banner-inner">
+          <span>Demo with fictional data. No real cruise line, ships or guests.</span>
+          <span id="as-of"></span>
+        </div>
+      </div>
+    </header>
+
+    <main id="app" class="container" tabindex="-1">
+      <div class="loading" role="status">Loading fleet data…</div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p>Built by <strong>Slavena Simeonova</strong></p>
+        <p class="footer-links">
+          <a href="https://github.com/slavenasimeonova/cruise-mcp">GitHub</a>
+          <a href="https://www.linkedin.com/in/slavena-simeonova-a39868233/">LinkedIn</a>
+        </p>
+        <p class="muted small">Static site: no server, no API calls. Same query code as the cruise-mcp MCP server.</p>
+      </div>
+    </footer>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
