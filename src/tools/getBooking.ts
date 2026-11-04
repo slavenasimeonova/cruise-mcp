@@ -6,10 +6,11 @@ import {
   fullName,
   isActive,
   isPaymentOverdue,
-  maskPassportNumber,
+  maskDocumentNumber,
   mobilityConflict,
   overbookedExcursionMessage,
-  passportCheck,
+  travelDocumentCheck,
+  travelDocumentMessage,
   requireSailing,
   round2,
 } from '../lib/domain.js';
@@ -20,8 +21,9 @@ export const getBooking = defineTool({
   name: 'get_booking',
   title: 'Get booking',
   description:
-    'Full details of one booking: status, cabin, sailing, guests (loyalty tier, passport status, special requests), ' +
-    'payment position and shore excursions, plus a list of flags that need attention. Passport numbers are masked.',
+    'Full details of one booking: status, cabin, sailing, guests (loyalty tier, travel documents and which document rule ' +
+    'applies, special requests), payment position and shore excursions, plus a list of flags that need attention. ' +
+    'Passport and ID card numbers are masked.',
   inputSchema: z.object({
     booking_id: z
       .string()
@@ -51,11 +53,26 @@ export const getBooking = defineTool({
         nationality: z.string(),
         loyaltyTier: z.string(),
         loyaltyNumber: z.string(),
+        travelDocument: z
+          .object({
+            status: z.enum(['valid', 'missing', 'expires_too_soon']),
+            rule: z.enum(['eu_schengen', 'passport_6_months']),
+            document: z.enum(['passport', 'id_card']).nullable(),
+            expiryDate: z.string().nullable(),
+          })
+          .describe(
+            'Verdict under the rule that applies: eu_schengen (EU citizen, all-Schengen itinerary: passport or national ID card ' +
+              'valid through return) or passport_6_months (passport valid 6 months after return).',
+          ),
         passport: z.object({
-          status: z.enum(['valid', 'missing', 'expires_too_soon']),
+          onFile: z.boolean(),
           numberMasked: z.string().nullable(),
           expiryDate: z.string().nullable(),
         }),
+        idCard: z
+          .object({ numberMasked: z.string(), expiryDate: z.string(), issuingCountry: z.string() })
+          .nullable()
+          .describe('National ID card on file, if any.'),
         specialRequests: z.array(z.object({ type: z.string(), detail: z.string() })),
       }),
     ),
@@ -97,11 +114,9 @@ export const getBooking = defineTool({
     const flags: string[] = [];
 
     const guests = passengers.map((p) => {
-      const check = passportCheck(p, sailing);
-      if (isActive(booking) && check === 'missing') flags.push(`Passport details missing for ${fullName(p)}`);
-      if (isActive(booking) && check === 'expires_too_soon') {
-        flags.push(`Passport for ${fullName(p)} expires ${p.passport.expiryDate}, less than 6 months after return`);
-      }
+      const check = travelDocumentCheck(p, sailing);
+      const documentFlag = travelDocumentMessage(p, sailing, booking.id, check);
+      if (isActive(booking) && documentFlag) flags.push(documentFlag);
       return {
         passengerId: p.id,
         name: fullName(p),
@@ -110,7 +125,15 @@ export const getBooking = defineTool({
         nationality: p.nationality,
         loyaltyTier: p.loyaltyTier,
         loyaltyNumber: p.loyaltyNumber,
-        passport: { status: check, numberMasked: maskPassportNumber(p.passport.number), expiryDate: p.passport.expiryDate },
+        travelDocument: check,
+        passport: {
+          onFile: p.passport.status === 'on_file',
+          numberMasked: maskDocumentNumber(p.passport.number),
+          expiryDate: p.passport.expiryDate,
+        },
+        idCard: p.idCard
+          ? { numberMasked: maskDocumentNumber(p.idCard.number)!, expiryDate: p.idCard.expiryDate, issuingCountry: p.idCard.issuingCountry }
+          : null,
         specialRequests: p.specialRequests.map((r) => ({ type: r.type, detail: r.detail })),
       };
     });

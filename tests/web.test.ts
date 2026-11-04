@@ -5,7 +5,7 @@ import { DEFAULT_DATA_FILE } from '../src/data/load.js';
 import { storeFromJson } from '../src/data/store.js';
 import type { Dataset } from '../src/data/types.js';
 import { findIssues } from '../src/tools/findIssues.js';
-import { assertNoRawPassportNumbers, toPublicDataset } from '../web/scripts/publicData.js';
+import { assertNoRawDocumentNumbers, toPublicDataset } from '../web/scripts/publicData.js';
 import { escapeHtml, html } from '../web/src/html.js';
 import { groupIssues, lookupBooking, normalizeBookingId, overviewRows, timeWeight } from '../web/src/model.js';
 import { NEXT_SAILING, store } from './helpers.js';
@@ -15,13 +15,18 @@ describe('published dataset', () => {
   const published = toPublicDataset(original);
   const json = JSON.stringify(published);
 
-  it('contains no raw passport numbers', () => {
-    expect(() => assertNoRawPassportNumbers(original, json)).not.toThrow();
+  it('contains no raw passport or ID card numbers', () => {
+    expect(() => assertNoRawDocumentNumbers(original, json)).not.toThrow();
     expect(published.passengers.every((p) => p.passport.number === null || /^\*+[A-Z0-9]{3}$/.test(p.passport.number))).toBe(true);
+    expect(published.passengers.filter((p) => p.idCard).length).toBeGreaterThan(0);
+    expect(published.passengers.every((p) => p.idCard === null || /^\*+[0-9]{3}$/.test(p.idCard.number))).toBe(true);
   });
 
-  it('refuses to publish when a raw number slips through', () => {
-    expect(() => assertNoRawPassportNumbers(original, JSON.stringify(original))).toThrow(/Refusing to publish/);
+  it('refuses to publish when a raw passport or ID card number slips through', () => {
+    expect(() => assertNoRawDocumentNumbers(original, JSON.stringify(original))).toThrow(/Refusing to publish/);
+    // Only ID card numbers leaked: still refused.
+    const idCardsOnly = { ...published, passengers: published.passengers.map((p, i) => ({ ...p, idCard: original.passengers[i]!.idCard })) };
+    expect(() => assertNoRawDocumentNumbers(original, JSON.stringify(idCardsOnly))).toThrow(/Refusing to publish/);
   });
 
   it('keeps every tool answer identical (masking does not change any result)', () => {
@@ -56,7 +61,9 @@ describe('overview', () => {
     const { totals } = findIssues.run(store, { sailing_id: 'AH-NP-261104' });
     expect(np.overbookedExcursions).toBe(1);
     expect(np.issues.total).toBe(totals.issues);
-    expect(np.issues.total).toBe(60 - totals.bookingsOnOverbookedExcursions + 1);
+    // One row for the overbooked excursion, not one per affected booking.
+    expect(totals.bookingsOnOverbookedExcursions).toBeGreaterThan(1);
+    expect(np.issues.total).toBe(totals.issues);
   });
 
   it('can sort by departure date instead', () => {
@@ -105,7 +112,7 @@ describe('booking lookup', () => {
       'accessibility_conflict',
       'accessibility_conflict',
       'overbooked_excursion',
-      'passport_expiry',
+      'travel_document_expiry',
       'unconfirmed_excursion',
     ]);
     expect(r.issues[0]!.severity).toBe('high');

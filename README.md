@@ -18,7 +18,7 @@ Built with the official TypeScript MCP SDK **v2** (`@modelcontextprotocol/server
 | **Schedule** | 24 seven-night sailings, Nov 2026 to Apr 2027: Western & Eastern Caribbean, Western Mediterranean, Greek Isles |
 | **Guests** | ~4,900 passengers on ~2,400 bookings (confirmed, pending payment, cancelled, waitlisted), with Blue / Silver / Gold / Platinum loyalty tiers |
 | **Excursions** | 324 excursions (3 per port of call) with capacity, prices, activity level, accessibility, ~5,600 excursion bookings (confirmed / requested / waitlisted) |
-| **Planted problems** | missing passports, passports expiring < 6 months after return, overdue payments, excursions overbooked after an operator cut capacity, operator confirmations still outstanding days before the tour, wheelchair users booked on inaccessible tours, dietary / mobility / medical / celebration requests |
+| **Planted problems** | missing or expiring travel documents (passports, and national ID cards for EU guests on all-Schengen sailings), overdue payments, excursions overbooked after an operator cut capacity, operator confirmations still outstanding days before the tour, wheelchair users booked on inaccessible tours, dietary / mobility / medical / celebration requests |
 
 The dataset's "today" is fixed at **2026-11-01**. Every relative value (days to departure, overdue, urgent) is
 computed from that date, not your clock, so answers never drift. The first departure (`AH-NP-261104`)
@@ -35,16 +35,27 @@ There is no write path in the code. Each returns `structuredContent` (validated 
 | Tool | Arguments | Returns |
 |---|---|---|
 | `list_sailings` | `ship?` (name or code), `from_date?` (YYYY-MM-DD), `within_days?` (0–366, counted from the as-of date) | Sailings with itinerary, days to departure, guests booked and occupancy |
-| `get_booking` | `booking_id` (`BK-100001`) | Status, cabin, guests (loyalty, passport status with masked number, special requests), payment, excursions, and attention flags |
+| `get_booking` | `booking_id` (`BK-100001`) | Status, cabin, guests (loyalty, travel-document verdict and rule, masked passport and ID card numbers, special requests), payment, excursions, and attention flags |
 | `find_unconfirmed_excursions` | `sailing_id`, `port?` | Excursion requests that are `requested` (awaiting the operator) or `waitlisted`, with urgency |
 | `excursion_availability` | `sailing_id`, `port` | Per excursion at a port: capacity, confirmed / requested / waitlisted guests, seats left, overbooked flag |
 | `passenger_summary` | `sailing_id` | Guests by booking status, occupancy, loyalty tiers, cabins, nationalities, documents, payments, every special request |
-| `find_issues` | `sailing_id` | Severity-ranked issues, one row per affected booking: guests confirmed on overbooked excursions, missing / expiring passports, overdue & pending payments, unconfirmed excursions ≤ 30 days out, mobility needs that conflict with a confirmed, requested or waitlisted excursion |
+| `find_issues` | `sailing_id` | Severity-ranked issues: each overbooked excursion once (listing the bookings it affects), missing / expiring travel documents, overdue & pending payments, unconfirmed excursions ≤ 30 days out, mobility needs that conflict with a confirmed, requested or waitlisted excursion |
 
 **Input handling:**
 - IDs and dates are validated by schema (`AH-CV-261107`, `BK-100001`, real calendar dates).
 - Ship and port names ignore case and accents. `roatan`, `Grand Cayman` and `rome` all work; `rome` resolves to `Civitavecchia (Rome)`.
 - Errors come back as `isError` results that say what is valid. For example: *"Port "Atlantis" is not a port of call on sailing AH-NP-261104. Its ports of call are: Marseille, La Spezia, …"*
+
+**Travel-document rules** (`src/lib/domain.ts`, shared by the tools and the dashboard):
+
+| Guest | Itinerary | Accepted documents |
+|---|---|---|
+| EU citizen | All-Schengen (every port in the Schengen area: the Mediterranean and Greek Isles sailings) | Passport **or** national ID card, valid through the return date |
+| Everyone else, or any guest on a non-Schengen itinerary (the Caribbean sailings) | Any | Passport valid at least 6 months after the return date |
+
+Each port in the data has a country, and "all-Schengen" is derived from the itinerary rather than hard-coded per region.
+Ireland is in the EU but not in Schengen, so an Irish port makes an itinerary non-Schengen, while Irish citizens still count
+as EU citizens. Irish guests have no ID cards in the seed data because Ireland doesn't issue national ID cards.
 
 ## Setup (Windows, PowerShell)
 
@@ -115,7 +126,7 @@ is a shortcut for the same command.
    third and fourth berths are in use).
 2. **"Run a pre-departure check on the Coral Vista sailing that leaves November 7th. What must be fixed first?"**
    Calls `list_sailings`, then `find_issues` on `AH-CV-261107`: an excursion overbooked after an operator capacity cut,
-   missing passports, overdue balances and tours still awaiting operator confirmation.
+   missing or expiring passports, overdue balances and tours still awaiting operator confirmation.
 3. **"Is anything still unconfirmed for the Northern Pearl's stop in Naples this week? Which tours there are sold out, and who's waitlisted?"**
    Calls `find_unconfirmed_excursions` and `excursion_availability` on `AH-NP-261104` with port `Naples`:
    the Amalfi Coast Drive is sold out with a waitlist, and Capri requests are still awaiting the operator.
@@ -136,8 +147,8 @@ number on the page is exactly what Claude gets over MCP.
 - **Booking lookup**: every open item for one booking in one place (try `BK-100054`).
 - **Ask Claude**: example questions with the exact tool calls and server responses.
 
-The published dataset is a copy with passport numbers already masked (`web/scripts/export-data.ts`). The build fails if any
-raw number would be published.
+The published dataset is a copy with passport and ID card numbers already masked (`web/scripts/export-data.ts`). The build
+fails if any raw number would be published.
 
 ```powershell
 npm.cmd run web:dev       # local dev server
@@ -154,7 +165,7 @@ src/
   data/types.ts            dataset types
   data/store.ts            in-memory lookup indexes (read-only, runs in Node and the browser)
   data/load.ts             reads data/cruise.json from disk (Node only)
-  lib/domain.ts            business rules: active bookings, passport validity, accessibility, name matching
+  lib/domain.ts            business rules: active bookings, travel documents, accessibility, name matching
   lib/dates.ts             UTC calendar-date helpers
   tools/*.ts               one file per tool: input/output Zod schemas + pure run() query
 web/
@@ -168,7 +179,8 @@ tests/
   seed.test.ts             determinism, committed-file match, referential integrity, planted problems
   tools.test.ts            each tool's query logic against the seeded data
   mcp.test.ts              real MCP client over in-memory transport + a stdio child-process test
-  web.test.ts              dashboard logic, HTML escaping, and the no-raw-passport-numbers check
+  web.test.ts              dashboard logic, HTML escaping, and the no-raw-document-numbers check
+  domain.test.ts           business rules: travel documents, accessibility conflicts
 ```
 
 ## Testing

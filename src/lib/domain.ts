@@ -13,13 +13,87 @@ import type {
 import { addMonths, daysBetween } from './dates.js';
 import { ToolInputError } from './errors.js';
 
-/** Passports must be valid this many months after the cruise ends. */
+/** Under the standard rule, passports must be valid this many months after the cruise ends. */
 export const PASSPORT_VALIDITY_MONTHS = 6;
 /** Excursions or departures within this many days count as urgent. */
 export const URGENT_DAYS = 14;
 export const SOON_DAYS = 30;
 
-export type PassportCheck = 'valid' | 'missing' | 'expires_too_soon';
+/** EU member states (ISO 3166-1 alpha-2). */
+export const EU_COUNTRIES: ReadonlySet<string> = new Set([
+  'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IE',
+  'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE',
+]);
+
+/** Schengen area members: the EU minus Ireland and Cyprus, plus Iceland, Liechtenstein, Norway and Switzerland. */
+export const SCHENGEN_COUNTRIES: ReadonlySet<string> = new Set([
+  ...[...EU_COUNTRIES].filter((c) => c !== 'IE' && c !== 'CY'),
+  'IS', 'LI', 'NO', 'CH',
+]);
+
+/** Every port the ship calls at, including embarkation and disembarkation, is in the Schengen area. */
+export function isAllSchengen(sailing: Sailing): boolean {
+  return sailing.itinerary.every((d) => d.kind === 'sea' || (d.country !== null && SCHENGEN_COUNTRIES.has(d.country)));
+}
+
+/**
+ * Which travel-document rule applies to a guest on a sailing:
+ * - `eu_schengen`: EU citizen on an all-Schengen itinerary; a passport or national ID card valid through the return date.
+ * - `passport_6_months`: everyone else; a passport valid at least 6 months after the return date.
+ */
+export type DocumentRule = 'eu_schengen' | 'passport_6_months';
+
+export interface TravelDocumentCheck {
+  status: 'valid' | 'missing' | 'expires_too_soon';
+  rule: DocumentRule;
+  /** The document that satisfies the rule, or the one that falls short; null when nothing usable is on file. */
+  document: 'passport' | 'id_card' | null;
+  expiryDate: string | null;
+}
+
+export function documentRule(passenger: Passenger, sailing: Sailing): DocumentRule {
+  return EU_COUNTRIES.has(passenger.nationality) && isAllSchengen(sailing) ? 'eu_schengen' : 'passport_6_months';
+}
+
+export function travelDocumentCheck(passenger: Passenger, sailing: Sailing): TravelDocumentCheck {
+  const rule = documentRule(passenger, sailing);
+  const passport =
+    passenger.passport.status === 'on_file' && passenger.passport.expiryDate !== null
+      ? { document: 'passport' as const, expiryDate: passenger.passport.expiryDate }
+      : null;
+
+  if (rule === 'passport_6_months') {
+    if (!passport) return { status: 'missing', rule, document: null, expiryDate: null };
+    const tooSoon = passport.expiryDate < addMonths(sailing.returnDate, PASSPORT_VALIDITY_MONTHS);
+    return { status: tooSoon ? 'expires_too_soon' : 'valid', rule, ...passport };
+  }
+
+  // EU citizen, all-Schengen: either document, valid through the return date. Passport preferred when both qualify.
+  const idCard = passenger.idCard ? { document: 'id_card' as const, expiryDate: passenger.idCard.expiryDate } : null;
+  const onFile = [passport, idCard].filter((d) => d !== null);
+  if (onFile.length === 0) return { status: 'missing', rule, document: null, expiryDate: null };
+  const usable = onFile.find((d) => d.expiryDate >= sailing.returnDate);
+  if (usable) return { status: 'valid', rule, ...usable };
+  const latest = onFile.reduce((a, b) => (b.expiryDate > a.expiryDate ? b : a));
+  return { status: 'expires_too_soon', rule, ...latest };
+}
+
+const DOCUMENT_NAMES = { passport: 'Passport', id_card: 'National ID card' } as const;
+
+/** Issue text for a missing or expiring travel document; null when the document is valid. Shared by find_issues and get_booking. */
+export function travelDocumentMessage(passenger: Passenger, sailing: Sailing, bookingId: string, check: TravelDocumentCheck): string | null {
+  const who = `${fullName(passenger)} (${bookingId})`;
+  if (check.status === 'valid') return null;
+  if (check.rule === 'eu_schengen') {
+    return check.status === 'missing'
+      ? `No passport or national ID card on file for ${who}. As an EU citizen on an all-Schengen itinerary, either is accepted.`
+      : `${DOCUMENT_NAMES[check.document!]} for ${who} expires ${check.expiryDate}, before the ${sailing.returnDate} return. ` +
+          'EU citizens on an all-Schengen itinerary need a passport or national ID card valid through the trip.';
+  }
+  return check.status === 'missing'
+    ? `No passport details on file for ${who}.`
+    : `Passport for ${who} expires ${check.expiryDate}, less than 6 months after the ${sailing.returnDate} return.`;
+}
 
 /** Bookings that hold a cabin and will sail. */
 export function isActive(booking: Booking): boolean {
@@ -28,12 +102,6 @@ export function isActive(booking: Booking): boolean {
 
 export function isPaymentOverdue(booking: Booking, asOf: string): boolean {
   return booking.status === 'pending_payment' && booking.paymentDueDate < asOf;
-}
-
-export function passportCheck(passenger: Passenger, sailing: Sailing): PassportCheck {
-  const { passport } = passenger;
-  if (passport.status === 'missing' || passport.expiryDate === null) return 'missing';
-  return passport.expiryDate < addMonths(sailing.returnDate, PASSPORT_VALIDITY_MONTHS) ? 'expires_too_soon' : 'valid';
 }
 
 export interface ExcursionLoad {
@@ -110,7 +178,8 @@ export function accessibilityConflictMessage(
   );
 }
 
-export function maskPassportNumber(number: string | null): string | null {
+/** Masks a passport or ID card number down to its last three characters. */
+export function maskDocumentNumber(number: string | null): string | null {
   return number === null ? null : `${'*'.repeat(Math.max(0, number.length - 3))}${number.slice(-3)}`;
 }
 

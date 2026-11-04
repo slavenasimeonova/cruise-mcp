@@ -22,6 +22,7 @@ import type {
   SpecialRequest,
 } from '../src/data/types.js';
 import { addDays, daysBetween } from '../src/lib/dates.js';
+import { isAllSchengen } from '../src/lib/domain.js';
 
 export const SEED = 20261101;
 export const AS_OF = '2026-11-01';
@@ -420,6 +421,66 @@ const FARE_PER_NIGHT: Record<Region, Record<CabinCategory, number>> = {
 
 const FINAL_PAYMENT_DAYS = 75;
 
+/** Country (ISO 3166-1 alpha-2) of every port; territories use their own code (KY, SX, VI, PR). */
+const PORT_COUNTRIES: Record<string, string> = {
+  Miami: 'US',
+  'Fort Lauderdale': 'US',
+  Cozumel: 'MX',
+  'Roatán': 'HN',
+  'Belize City': 'BZ',
+  'George Town (Grand Cayman)': 'KY',
+  Nassau: 'BS',
+  'St. Maarten': 'SX',
+  'St. Thomas': 'VI',
+  'San Juan': 'PR',
+  Barcelona: 'ES',
+  Marseille: 'FR',
+  'La Spezia': 'IT',
+  'Civitavecchia (Rome)': 'IT',
+  Naples: 'IT',
+  'Palma de Mallorca': 'ES',
+  'Piraeus (Athens)': 'GR',
+  Mykonos: 'GR',
+  Santorini: 'GR',
+  Rhodes: 'GR',
+  Heraklion: 'GR',
+  Nafplio: 'GR',
+};
+
+function portCountry(port: string): string {
+  const country = PORT_COUNTRIES[port];
+  if (!country) throw new Error(`No country for port ${port}`);
+  return country;
+}
+
+/** Nationalities in the dataset whose countries issue national ID cards (Ireland issues none). */
+const ID_CARD_COUNTRIES = new Set(['DE', 'ES', 'FR', 'GR', 'IT', 'NL']);
+
+/**
+ * EU guests on all-Schengen sailings often supply a national ID card, and some of them no passport at all.
+ * Uses its own PRNG stream after the main generation, so adding ID cards changes no other generated value.
+ */
+function addIdCards(seed: number, sailings: Sailing[], bookings: Booking[], passengers: Passenger[]): void {
+  const rng = new Rng(seed ^ 0x1dca7d);
+  const sailingById = new Map(sailings.map((s) => [s.id, s]));
+  const bookingById = new Map(bookings.map((b) => [b.id, b]));
+  for (const p of passengers) {
+    const sailing = sailingById.get(bookingById.get(p.bookingId)!.sailingId)!;
+    if (!isAllSchengen(sailing) || !ID_CARD_COUNTRIES.has(p.nationality) || !rng.chance(0.45)) continue;
+    // A few cards lapse before the cruise ends; the rest are comfortably valid.
+    const expiryDate = rng.chance(0.06) ? addDays(sailing.returnDate, -rng.int(1, 150)) : addDays(AS_OF, rng.int(60, 3650));
+    p.idCard = {
+      number: `${String.fromCharCode(65 + rng.int(0, 25))}${pad(rng.int(0, 99_999_999), 8)}`,
+      expiryDate,
+      issuingCountry: p.nationality,
+    };
+    // Half of them travel on the ID card alone.
+    if (p.passport.status === 'on_file' && rng.chance(0.5)) {
+      p.passport = { status: 'missing', number: null, expiryDate: null, issuingCountry: null };
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Generator
 // ---------------------------------------------------------------------------
@@ -453,19 +514,37 @@ export function generateDataset(seed = SEED): Dataset {
     for (let i = 0; i < SAILINGS_PER_SHIP; i++) {
       const departureDate = addDays(route.firstDeparture, i * DAYS_BETWEEN_SAILINGS);
       const itinerary: ItineraryDay[] = [
-        { day: 1, date: departureDate, kind: 'embark', port: route.embarkPort, arrival: null, departure: '17:00', tender: false },
+        { day: 1, date: departureDate, kind: 'embark', port: route.embarkPort, country: portCountry(route.embarkPort), arrival: null, departure: '17:00', tender: false },
       ];
       route.days.forEach((stop, idx) => {
         const day = idx + 2;
         const date = addDays(departureDate, idx + 1);
         itinerary.push(
           stop === 'sea'
-            ? { day, date, kind: 'sea', port: null, arrival: null, departure: null, tender: false }
-            : { day, date, kind: 'port', port: stop.port, arrival: stop.arrival, departure: stop.departure, tender: stop.tender ?? false },
+            ? { day, date, kind: 'sea', port: null, country: null, arrival: null, departure: null, tender: false }
+            : {
+                day,
+                date,
+                kind: 'port',
+                port: stop.port,
+                country: portCountry(stop.port),
+                arrival: stop.arrival,
+                departure: stop.departure,
+                tender: stop.tender ?? false,
+              },
         );
       });
       const returnDate = addDays(departureDate, 7);
-      itinerary.push({ day: 8, date: returnDate, kind: 'disembark', port: route.embarkPort, arrival: '07:00', departure: null, tender: false });
+      itinerary.push({
+        day: 8,
+        date: returnDate,
+        kind: 'disembark',
+        port: route.embarkPort,
+        country: portCountry(route.embarkPort),
+        arrival: '07:00',
+        departure: null,
+        tender: false,
+      });
       sailings.push({
         id: `AH-${ship.id}-${compactDate(departureDate)}`,
         shipId: ship.id,
@@ -546,6 +625,7 @@ export function generateDataset(seed = SEED): Dataset {
           loyaltyTier: tier,
           loyaltyNumber: `AH${nextLoyalty++}`,
           passport,
+          idCard: null,
           specialRequests,
         });
       }
@@ -791,11 +871,13 @@ export function generateDataset(seed = SEED): Dataset {
     excursions.push(...sailingExcursions);
   }
 
+  addIdCards(seed, sailings, bookings, passengers);
+
   return {
     meta: {
       name: 'Azure Horizon Cruises demo operations data (fictional)',
       fictional: true,
-      schemaVersion: 1,
+      schemaVersion: 2,
       seed,
       asOf: AS_OF,
       generator: 'scripts/generate.ts',

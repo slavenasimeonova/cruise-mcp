@@ -453,6 +453,25 @@ main:focus {
   color: var(--high);
 }
 
+.doc-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 6px;
+  align-items: baseline;
+}
+
+.doc-counts::after {
+  content: "✓";
+  color: var(--ok);
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+
+.chip-schengen {
+  color: var(--brand);
+  border-color: var(--brand);
+}
+
 .tier {
   font-weight: 600;
   font-size: 0.85rem;

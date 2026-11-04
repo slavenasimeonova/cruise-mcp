@@ -10,7 +10,8 @@ import {
   isPaymentOverdue,
   mobilityConflict,
   overbookedExcursionSummary,
-  passportCheck,
+  travelDocumentCheck,
+  travelDocumentMessage,
   requireSailing,
   round2,
   SOON_DAYS,
@@ -20,8 +21,8 @@ import { defineTool, sailingIdInput, sailingRef, sailingRefOutput } from './shar
 
 const ISSUE_TYPES = [
   'overbooked_excursion',
-  'missing_passport',
-  'passport_expiry',
+  'missing_travel_document',
+  'travel_document_expiry',
   'overdue_payment',
   'unconfirmed_excursion',
   'accessibility_conflict',
@@ -55,8 +56,9 @@ export const findIssues = defineTool({
   title: 'Find operational issues',
   description:
     'Pre-departure issue check for one sailing, ranked by severity. Each overbooked excursion is one issue listing the ' +
-    'bookings it affects; every other issue belongs to one booking. Covers overbooked excursions, missing passports, ' +
-    'passports expiring less than 6 months after return, ' +
+    'bookings it affects; every other issue belongs to one booking. Covers overbooked excursions, missing or expiring ' +
+    'travel documents (a passport valid 6 months after return; EU citizens on an all-Schengen itinerary may instead use ' +
+    'a passport or national ID card valid through the return date), ' +
     'overdue and pending payments, excursion requests still awaiting operator confirmation within 30 days, and guests ' +
     'whose mobility needs conflict with an excursion they are confirmed, requested or waitlisted on.',
   inputSchema: z.object({ sailing_id: sailingIdInput }),
@@ -94,25 +96,18 @@ export const findIssues = defineTool({
       const byId = new Map(passengers.map((p) => [p.id, p]));
 
       for (const p of passengers) {
-        const check = passportCheck(p, sailing);
-        if (check === 'missing') {
-          add({
-            severity: daysOut <= SOON_DAYS ? 'high' : 'medium',
-            type: 'missing_passport',
-            bookingId: booking.id,
-            passengerId: p.id,
-            message: `No passport details on file for ${fullName(p)} (${booking.id}).`,
-          });
-        } else if (check === 'expires_too_soon') {
-          const expiresBeforeReturn = (p.passport.expiryDate ?? '') <= sailing.returnDate;
-          add({
-            severity: expiresBeforeReturn || daysOut <= SOON_DAYS ? 'high' : 'medium',
-            type: 'passport_expiry',
-            bookingId: booking.id,
-            passengerId: p.id,
-            message: `Passport for ${fullName(p)} (${booking.id}) expires ${p.passport.expiryDate}, less than 6 months after the ${sailing.returnDate} return.`,
-          });
-        }
+        const check = travelDocumentCheck(p, sailing);
+        const message = travelDocumentMessage(p, sailing, booking.id, check);
+        if (message === null) continue;
+        // A document that lapses before the cruise ends is always urgent.
+        const expiresBeforeReturn = check.status === 'expires_too_soon' && (check.expiryDate ?? '') <= sailing.returnDate;
+        add({
+          severity: expiresBeforeReturn || daysOut <= SOON_DAYS ? 'high' : 'medium',
+          type: check.status === 'missing' ? 'missing_travel_document' : 'travel_document_expiry',
+          bookingId: booking.id,
+          passengerId: p.id,
+          message,
+        });
       }
 
       const balance = round2(booking.totalFare - booking.amountPaid);

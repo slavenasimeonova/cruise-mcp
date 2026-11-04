@@ -1,6 +1,15 @@
 // Pure query tests: each tool's run() against the seeded dataset, without MCP in the way.
 import { describe, expect, it } from 'vitest';
-import { excursionLoad, isActive, overbookedExcursionMessage, passportCheck } from '../src/lib/domain.js';
+import type { Passenger, Sailing } from '../src/data/types.js';
+import { addMonths } from '../src/lib/dates.js';
+import {
+  documentRule,
+  excursionLoad,
+  isActive,
+  overbookedExcursionMessage,
+  travelDocumentCheck,
+  travelDocumentMessage,
+} from '../src/lib/domain.js';
 import { ToolInputError } from '../src/lib/errors.js';
 import { excursionAvailability } from '../src/tools/excursionAvailability.js';
 import { findIssues } from '../src/tools/findIssues.js';
@@ -9,6 +18,11 @@ import { getBooking } from '../src/tools/getBooking.js';
 import { listSailings } from '../src/tools/listSailings.js';
 import { passengerSummary } from '../src/tools/passengerSummary.js';
 import { NEXT_SAILING, store } from './helpers.js';
+
+/** Every guest on a booking that will sail, across the fleet. */
+const activePassengers = (): Passenger[] =>
+  store.sailings.flatMap((s) => store.bookingsForSailing(s.id).filter(isActive)).flatMap((b) => store.passengersFor(b.passengerIds));
+const sailingOf = (p: Passenger): Sailing => store.sailing(store.booking(p.bookingId)!.sailingId)!;
 
 describe('list_sailings', () => {
   it('lists all 24 sailings in departure order', () => {
@@ -78,20 +92,40 @@ describe('get_booking', () => {
     expect(out.payment.balanceDue).toBe(booking.totalFare - booking.amountPaid);
   });
 
-  it('masks passport numbers', () => {
-    const out = getBooking.run(store, { booking_id: 'BK-100001' });
-    for (const g of out.guests) {
-      if (g.passport.numberMasked !== null) expect(g.passport.numberMasked).toMatch(/^\*+[A-Z0-9]{3}$/);
+  it('masks passport and ID card numbers', () => {
+    const withIdCard = activePassengers().find((p) => p.idCard && p.passport.status === 'on_file')!;
+    for (const id of ['BK-100001', withIdCard.bookingId]) {
+      for (const g of getBooking.run(store, { booking_id: id }).guests) {
+        if (g.passport.numberMasked !== null) expect(g.passport.numberMasked).toMatch(/^\*+[A-Z0-9]{3}$/);
+        if (g.idCard) expect(g.idCard.numberMasked).toMatch(/^\*+[0-9]{3}$/);
+      }
+    }
+    const guest = getBooking.run(store, { booking_id: withIdCard.bookingId }).guests.find((g) => g.passengerId === withIdCard.id)!;
+    expect(guest.idCard!.numberMasked).not.toBe(withIdCard.idCard!.number);
+  });
+
+  it('flags missing and expiring travel documents with the same text as find_issues', () => {
+    const problems = activePassengers().filter((p) => travelDocumentCheck(p, sailingOf(p)).status !== 'valid');
+    // Both rules and both outcomes occur in the data.
+    for (const rule of ['eu_schengen', 'passport_6_months'] as const) {
+      for (const status of ['missing', 'expires_too_soon'] as const) {
+        expect(problems.some((p) => travelDocumentCheck(p, sailingOf(p)).rule === rule && travelDocumentCheck(p, sailingOf(p)).status === status)).toBe(true);
+      }
+    }
+    for (const p of problems.slice(0, 40)) {
+      const message = travelDocumentMessage(p, sailingOf(p), p.bookingId, travelDocumentCheck(p, sailingOf(p)))!;
+      expect(getBooking.run(store, { booking_id: p.bookingId }).flags).toContain(message);
+      const issues = findIssues.run(store, { sailing_id: sailingOf(p).id }).issues;
+      expect(issues.find((i) => i.passengerId === p.id && i.message === message)).toBeDefined();
     }
   });
 
-  it('flags a missing passport', () => {
-    const p = store.sailings
-      .flatMap((s) => store.bookingsForSailing(s.id).filter(isActive))
-      .flatMap((b) => store.passengersFor(b.passengerIds))
-      .find((x) => x.passport.status === 'missing')!;
-    const out = getBooking.run(store, { booking_id: p.bookingId });
-    expect(out.flags.some((f) => f.includes('Passport details missing') && f.includes(p.lastName))).toBe(true);
+  it('reports which rule and document decide each guest', () => {
+    const idOnly = activePassengers().find((p) => p.idCard && p.passport.status === 'missing' && travelDocumentCheck(p, sailingOf(p)).status === 'valid')!;
+    const guest = getBooking.run(store, { booking_id: idOnly.bookingId }).guests.find((g) => g.passengerId === idOnly.id)!;
+    expect(guest.travelDocument).toEqual({ status: 'valid', rule: 'eu_schengen', document: 'id_card', expiryDate: idOnly.idCard!.expiryDate });
+    expect(guest.passport.onFile).toBe(false);
+    expect(getBooking.run(store, { booking_id: idOnly.bookingId }).sailing.allSchengen).toBe(true);
   });
 
   it('flags overdue payments', () => {
@@ -230,12 +264,19 @@ describe('passenger_summary', () => {
     expect(out.specialRequests.items.every((i) => activeBookings.has(i.bookingId))).toBe(true);
   });
 
-  it('counts missing passports the same way find_issues does', () => {
-    const summary = passengerSummary.run(store, { sailing_id: NEXT_SAILING.id });
-    const issues = findIssues.run(store, { sailing_id: NEXT_SAILING.id });
-    expect(summary.documents.passportsMissing).toBe(issues.totals.byType.missing_passport);
-    expect(summary.documents.passportsExpiringTooSoon).toBe(issues.totals.byType.passport_expiry);
-    expect(summary.payments.overdueBookings).toBe(issues.totals.byType.overdue_payment);
+  it('counts travel documents the same way find_issues does, on every sailing', () => {
+    for (const s of store.sailings) {
+      const summary = passengerSummary.run(store, { sailing_id: s.id });
+      const issues = findIssues.run(store, { sailing_id: s.id });
+      expect(summary.documents.travelDocumentsMissing).toBe(issues.totals.byType.missing_travel_document);
+      expect(summary.documents.travelDocumentsExpiring).toBe(issues.totals.byType.travel_document_expiry);
+      expect(summary.payments.overdueBookings).toBe(issues.totals.byType.overdue_payment);
+      // The EU rule only exists on all-Schengen itineraries.
+      if (!summary.sailing.allSchengen) expect(summary.documents.euSchengenRuleGuests + summary.documents.travelingOnIdCard).toBe(0);
+    }
+    const med = passengerSummary.run(store, { sailing_id: NEXT_SAILING.id }).documents;
+    expect(med.euSchengenRuleGuests).toBeGreaterThan(0);
+    expect(med.travelingOnIdCard).toBeGreaterThan(0);
   });
 });
 
@@ -244,7 +285,7 @@ describe('find_issues', () => {
 
   it('finds the planted problems on the next sailing', () => {
     expect(out.totals.byType.overbooked_excursion).toBeGreaterThanOrEqual(1);
-    expect(out.totals.byType.missing_passport).toBeGreaterThan(0);
+    expect(out.totals.byType.missing_travel_document).toBeGreaterThan(0);
     expect(out.totals.byType.overdue_payment).toBeGreaterThan(0);
     expect(out.totals.byType.unconfirmed_excursion).toBeGreaterThan(0);
   });
@@ -257,19 +298,35 @@ describe('find_issues', () => {
     expect(Object.values(out.totals.byType).reduce((a, b) => a + b, 0)).toBe(out.issues.length);
   });
 
-  it('reports every missing or soon-expiring passport on sailing bookings', () => {
+  it('reports every missing or expiring travel document on sailing bookings, and nothing else', () => {
     const expected = store
       .bookingsForSailing(NEXT_SAILING.id)
       .filter(isActive)
       .flatMap((b) => store.passengersFor(b.passengerIds))
-      .filter((p) => passportCheck(p, NEXT_SAILING) !== 'valid')
+      .filter((p) => travelDocumentCheck(p, NEXT_SAILING).status !== 'valid')
       .map((p) => p.id)
       .sort();
     const reported = out.issues
-      .filter((i) => i.type === 'missing_passport' || i.type === 'passport_expiry')
+      .filter((i) => i.type === 'missing_travel_document' || i.type === 'travel_document_expiry')
       .map((i) => i.passengerId!)
       .sort();
     expect(reported).toEqual(expected);
+  });
+
+  it('does not flag EU guests on all-Schengen sailings whose passport is valid through return but not 6 months after', () => {
+    const relaxed = activePassengers().filter((p) => {
+      const s = sailingOf(p);
+      return (
+        documentRule(p, s) === 'eu_schengen' &&
+        p.passport.status === 'on_file' &&
+        p.passport.expiryDate! >= s.returnDate &&
+        p.passport.expiryDate! < addMonths(s.returnDate, 6)
+      );
+    });
+    expect(relaxed.length).toBeGreaterThan(0);
+    for (const p of relaxed) {
+      expect(findIssues.run(store, { sailing_id: sailingOf(p).id }).issues.some((i) => i.passengerId === p.id && i.type.includes('travel_document'))).toBe(false);
+    }
   });
 
   it('ignores cancelled and waitlisted bookings', () => {

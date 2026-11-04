@@ -25,8 +25,8 @@ export const SEVERITIES: readonly Severity[] = ['high', 'medium', 'low'];
 
 export const ISSUE_LABELS: Record<IssueType | BookingNoteType, string> = {
   overbooked_excursion: 'Overbooked excursions',
-  missing_passport: 'Missing passports',
-  passport_expiry: 'Passports expiring too soon',
+  missing_travel_document: 'Missing travel documents',
+  travel_document_expiry: 'Travel documents expiring too soon',
   overdue_payment: 'Overdue payments',
   unconfirmed_excursion: 'Excursions awaiting operator',
   accessibility_conflict: 'Accessibility conflicts',

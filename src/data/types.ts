@@ -37,6 +37,8 @@ export interface ItineraryDay {
   kind: 'embark' | 'port' | 'sea' | 'disembark';
   /** null on sea days. */
   port: string | null;
+  /** ISO 3166-1 alpha-2 code of the port's country (or territory); null on sea days. */
+  country: string | null;
   arrival: string | null;
   departure: string | null;
   tender: boolean;
@@ -62,6 +64,13 @@ export interface Passport {
   issuingCountry: string | null;
 }
 
+/** A national identity card on file. Only issued by some EU countries; only on file when the guest supplied one. */
+export interface IdCard {
+  number: string;
+  expiryDate: string;
+  issuingCountry: string;
+}
+
 export interface SpecialRequest {
   type: SpecialRequestType;
   detail: string;
@@ -79,6 +88,7 @@ export interface Passenger {
   loyaltyTier: LoyaltyTier;
   loyaltyNumber: string;
   passport: Passport;
+  idCard: IdCard | null;
   specialRequests: SpecialRequest[];
 }
 
@@ -136,7 +146,7 @@ export interface Dataset {
   meta: {
     name: string;
     fictional: true;
-    schemaVersion: 1;
+    schemaVersion: 2;
     seed: number;
     /** The "today" of the dataset. All relative dates (days to departure, overdue) use this. */
     asOf: string;

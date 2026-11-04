@@ -2,7 +2,7 @@ import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import type { CruiseStore } from '../data/store.js';
 import type { Sailing } from '../data/types.js';
-import { daysToDeparture, requireShip } from '../lib/domain.js';
+import { daysToDeparture, isAllSchengen, requireShip } from '../lib/domain.js';
 import { ToolInputError } from '../lib/errors.js';
 
 // ---------------------------------------------------------------------------
@@ -32,6 +32,7 @@ export const sailingRefOutput = z.object({
   departureDate: z.string(),
   returnDate: z.string(),
   daysToDeparture: z.number().int(),
+  allSchengen: z.boolean().describe('Every port is in the Schengen area, so EU citizens may travel on a national ID card.'),
 });
 
 export function sailingRef(store: CruiseStore, sailing: Sailing): z.output<typeof sailingRefOutput> {
@@ -43,6 +44,7 @@ export function sailingRef(store: CruiseStore, sailing: Sailing): z.output<typeo
     departureDate: sailing.departureDate,
     returnDate: sailing.returnDate,
     daysToDeparture: daysToDeparture(store, sailing),
+    allSchengen: isAllSchengen(sailing),
   };
 }
 

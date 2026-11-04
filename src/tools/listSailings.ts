@@ -1,6 +1,6 @@
 import * as z from 'zod/v4';
 import { addDays, isValidIsoDate } from '../lib/dates.js';
-import { daysToDeparture, isActive, portsOfCall, requireShip, resolveShip, round2 } from '../lib/domain.js';
+import { daysToDeparture, isActive, isAllSchengen, portsOfCall, requireShip, resolveShip, round2 } from '../lib/domain.js';
 import { ToolInputError } from '../lib/errors.js';
 import { defineTool } from './shared.js';
 
@@ -51,6 +51,7 @@ export const listSailings = defineTool({
         embarkPort: z.string(),
         portsOfCall: z.array(z.string()),
         daysToDeparture: z.number().int(),
+        allSchengen: z.boolean(),
         guestsBooked: z.number().int(),
         guestCapacity: z.number().int(),
         occupancyPct: z.number(),
@@ -91,6 +92,7 @@ export const listSailings = defineTool({
           embarkPort: s.embarkPort,
           portsOfCall: portsOfCall(s).map((d) => d.port ?? ''),
           daysToDeparture: daysToDeparture(store, s),
+          allSchengen: isAllSchengen(s),
           guestsBooked,
           guestCapacity: sailingShip.guestCapacity,
           occupancyPct: round2((guestsBooked / sailingShip.guestCapacity) * 100),

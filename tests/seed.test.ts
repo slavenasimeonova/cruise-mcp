@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { generateDataset, serializeDataset } from '../scripts/generate.js';
 import { DEFAULT_DATA_FILE } from '../src/data/load.js';
+import { isAllSchengen } from '../src/lib/domain.js';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const dataset = generateDataset();
@@ -59,6 +60,27 @@ describe('seed data', () => {
       if (b.cancelledOn) expect(b.cancelledOn <= dataset.meta.asOf).toBe(true);
     }
     for (const x of dataset.excursionBookings) expect(x.requestedOn <= dataset.meta.asOf).toBe(true);
+  });
+
+  it('gives every port a country, and marks the Mediterranean and Greek sailings all-Schengen', () => {
+    for (const s of dataset.sailings) {
+      for (const d of s.itinerary) expect(d.kind === 'sea' ? d.country === null : /^[A-Z]{2}$/.test(d.country ?? '')).toBe(true);
+      expect(isAllSchengen(s)).toBe(s.region !== 'Caribbean');
+    }
+  });
+
+  it('only puts national ID cards on EU guests of all-Schengen sailings, from countries that issue them', () => {
+    const sailingOf = new Map(dataset.bookings.map((b) => [b.id, dataset.sailings.find((s) => s.id === b.sailingId)!]));
+    const withIdCard = dataset.passengers.filter((p) => p.idCard);
+    expect(withIdCard.length).toBeGreaterThan(100);
+    for (const p of withIdCard) {
+      expect(isAllSchengen(sailingOf.get(p.bookingId)!)).toBe(true);
+      expect(['DE', 'ES', 'FR', 'GR', 'IT', 'NL']).toContain(p.nationality);
+      expect(p.idCard!.issuingCountry).toBe(p.nationality);
+    }
+    // Some travel on the ID card alone, and some cards lapse before the cruise ends.
+    expect(withIdCard.some((p) => p.passport.status === 'missing')).toBe(true);
+    expect(withIdCard.some((p) => p.idCard!.expiryDate < sailingOf.get(p.bookingId)!.returnDate)).toBe(true);
   });
 
   it('plants the problems the tools are meant to find', () => {

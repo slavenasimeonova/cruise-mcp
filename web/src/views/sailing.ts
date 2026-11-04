@@ -28,7 +28,7 @@ export function sailingView(store: CruiseStore, sailingId: string): View {
     <nav class="crumbs" aria-label="Breadcrumb"><a href="#/">Overview</a> <span aria-hidden="true">/</span> <span class="mono">${ref.sailingId}</span></nav>
     <section class="page-head">
       <div>
-        <p class="eyebrow">${ref.ship} · ${ref.region}</p>
+        <p class="eyebrow">${ref.ship} · ${ref.region}${ref.allSchengen ? ' · All-Schengen' : ''}</p>
         <h1>${ref.name}</h1>
         <p class="lede">${longDate(ref.departureDate)} – ${longDate(ref.returnDate)} · <strong>${departsIn(ref.daysToDeparture)}</strong></p>
       </div>
@@ -79,6 +79,15 @@ export function sailingView(store: CruiseStore, sailingId: string): View {
           )}
         </ul>
         <p class="muted small">Top nationalities: ${s.nationalities.map((n) => `${n.country} ${n.guests}`).join(' · ')}</p>
+        <h3>Travel documents</h3>
+        <p class="small">
+          ${ref.allSchengen
+            ? html`<span class="chip chip-schengen">All-Schengen itinerary</span>
+                ${s.documents.euSchengenRuleGuests} EU citizens may use a passport or national ID card valid through return
+                (${s.documents.travelingOnIdCard} travelling on an ID card). Everyone else needs a passport valid 6 months after return.`
+            : 'Every guest needs a passport valid 6 months after return (not an all-Schengen itinerary).'}
+        </p>
+        <p class="muted small">${s.documents.travelDocumentsMissing} missing · ${s.documents.travelDocumentsExpiring} expiring too soon</p>
       </section>
     </div>
 

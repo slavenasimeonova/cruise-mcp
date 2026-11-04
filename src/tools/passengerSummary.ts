@@ -1,7 +1,7 @@
 import * as z from 'zod/v4';
 import { CABIN_CATEGORIES, LOYALTY_TIERS } from '../data/types.js';
 import { ageOn } from '../lib/dates.js';
-import { fullName, isActive, isPaymentOverdue, passportCheck, requireSailing, requireShip, round2 } from '../lib/domain.js';
+import { fullName, isActive, isPaymentOverdue, requireSailing, requireShip, round2, travelDocumentCheck } from '../lib/domain.js';
 import { defineTool, sailingIdInput, sailingRef, sailingRefOutput } from './shared.js';
 
 const count = z.number().int();
@@ -38,7 +38,12 @@ export const passengerSummary = defineTool({
     loyaltyTiers: z.object({ Blue: count, Silver: count, Gold: count, Platinum: count }),
     cabins: z.array(z.object({ category: z.string(), total: count, booked: count, available: count })),
     nationalities: z.array(z.object({ country: z.string(), guests: count })),
-    documents: z.object({ passportsMissing: count, passportsExpiringTooSoon: count }),
+    documents: z.object({
+      travelDocumentsMissing: count,
+      travelDocumentsExpiring: count,
+      euSchengenRuleGuests: count.describe('EU citizens on an all-Schengen itinerary: a passport or national ID card valid through return.'),
+      travelingOnIdCard: count.describe('Guests whose valid travel document is a national ID card.'),
+    }),
     payments: z.object({ currency: z.string(), pendingBookings: count, overdueBookings: count, outstandingOnPending: z.number() }),
     specialRequests: z.object({
       total: count,
@@ -65,17 +70,18 @@ export const passengerSummary = defineTool({
     const byType = { dietary: 0, mobility: 0, celebration: 0, medical: 0 };
     const items: z.output<typeof specialRequestItem>[] = [];
     let adults = 0;
-    let passportsMissing = 0;
-    let passportsExpiringTooSoon = 0;
+    const documents = { travelDocumentsMissing: 0, travelDocumentsExpiring: 0, euSchengenRuleGuests: 0, travelingOnIdCard: 0 };
 
     for (const b of active) {
       for (const p of store.passengersFor(b.passengerIds)) {
         loyaltyTiers[p.loyaltyTier] += 1;
         nationalityCounts.set(p.nationality, (nationalityCounts.get(p.nationality) ?? 0) + 1);
         if (ageOn(p.dateOfBirth, sailing.departureDate) >= 18) adults += 1;
-        const check = passportCheck(p, sailing);
-        if (check === 'missing') passportsMissing += 1;
-        if (check === 'expires_too_soon') passportsExpiringTooSoon += 1;
+        const check = travelDocumentCheck(p, sailing);
+        if (check.status === 'missing') documents.travelDocumentsMissing += 1;
+        if (check.status === 'expires_too_soon') documents.travelDocumentsExpiring += 1;
+        if (check.rule === 'eu_schengen') documents.euSchengenRuleGuests += 1;
+        if (check.status === 'valid' && check.document === 'id_card') documents.travelingOnIdCard += 1;
         for (const r of p.specialRequests) {
           byType[r.type] += 1;
           items.push({ passengerId: p.id, name: fullName(p), bookingId: b.id, cabinNumber: b.cabinNumber, type: r.type, detail: r.detail });
@@ -104,7 +110,7 @@ export const passengerSummary = defineTool({
       `${sailing.id} (${ship.name}, departs ${sailing.departureDate}): ${sailingGuests} guests sailing ` +
       `(${guestCounts.confirmed} confirmed, ${guestCounts.pending_payment} pending payment), ${occupancyPct}% of ${ship.guestCapacity} lower berths. ` +
       `${bookingCounts.cancelled} cancelled and ${bookingCounts.waitlisted} waitlisted bookings. ` +
-      `${totalRequests} special requests; ${passportsMissing} passports missing.`;
+      `${totalRequests} special requests; ${documents.travelDocumentsMissing} travel documents missing.`;
 
     return {
       asOf: store.asOf,
@@ -121,7 +127,7 @@ export const passengerSummary = defineTool({
       loyaltyTiers,
       cabins,
       nationalities,
-      documents: { passportsMissing, passportsExpiringTooSoon },
+      documents,
       payments: {
         currency: sailing.currency,
         pendingBookings: pending.length,

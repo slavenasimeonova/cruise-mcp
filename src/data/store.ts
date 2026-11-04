@@ -90,11 +90,11 @@ export class CruiseStore {
   }
 }
 
-/** Builds a store from parsed JSON, rejecting anything that is not a schemaVersion 1 dataset. */
+/** Builds a store from parsed JSON, rejecting anything that is not a schemaVersion 2 dataset. */
 export function storeFromJson(data: unknown, source: string): CruiseStore {
   const d = data as Partial<Dataset> | null;
-  if (d?.meta?.schemaVersion !== 1 || !Array.isArray(d.sailings) || !Array.isArray(d.bookings)) {
-    throw new Error(`${source} is not a schemaVersion 1 cruise dataset. Run "npm run seed" to regenerate it.`);
+  if (d?.meta?.schemaVersion !== 2 || !Array.isArray(d.sailings) || !Array.isArray(d.bookings)) {
+    throw new Error(`${source} is not a schemaVersion 2 cruise dataset. Run "npm run seed" to regenerate it.`);
   }
   return new CruiseStore(d as Dataset);
 }
