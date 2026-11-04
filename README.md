@@ -34,7 +34,7 @@ There is no write path in the code. Each returns `structuredContent` (validated 
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `list_sailings` | `ship?` (name or code), `from_date?` (YYYY-MM-DD) | Sailings with itinerary, days to departure, guests booked and occupancy |
+| `list_sailings` | `ship?` (name or code), `from_date?` (YYYY-MM-DD), `within_days?` (0–366, counted from the as-of date) | Sailings with itinerary, days to departure, guests booked and occupancy |
 | `get_booking` | `booking_id` (`BK-100001`) | Status, cabin, guests (loyalty, passport status with masked number, special requests), payment, excursions, and attention flags |
 | `find_unconfirmed_excursions` | `sailing_id`, `port?` | Excursion requests that are `requested` (awaiting the operator) or `waitlisted`, with urgency |
 | `excursion_availability` | `sailing_id`, `port` | Per excursion at a port: capacity, confirmed / requested / waitlisted guests, seats left, overbooked flag |
@@ -111,7 +111,7 @@ is a shortcut for the same command.
 ## 5 questions to ask Claude
 
 1. **"Which Azure Horizon sailings leave in the next two weeks, and how full are they?"**
-   Calls `list_sailings`: four departures between Nov 4 and Nov 14, all 94–102% full (above 100% means
+   Calls `list_sailings` with `within_days: 14`: four departures between Nov 4 and Nov 14, all 94–102% full (above 100% means
    third and fourth berths are in use).
 2. **"Run a pre-departure check on the Coral Vista sailing that leaves November 7th. What must be fixed first?"**
    Calls `list_sailings`, then `find_issues` on `AH-CV-261107`: an excursion overbooked after an operator capacity cut,

@@ -44,7 +44,7 @@ describe('MCP server (in-memory transport)', () => {
   });
 
   const validCalls: Record<string, Record<string, unknown>> = {
-    list_sailings: { ship: 'Sea Lyra' },
+    list_sailings: { ship: 'Sea Lyra', within_days: 30 },
     get_booking: { booking_id: 'BK-100001' },
     find_unconfirmed_excursions: { sailing_id: NEXT_SAILING.id },
     excursion_availability: { sailing_id: NEXT_SAILING.id, port: 'Naples' },
@@ -64,6 +64,10 @@ describe('MCP server (in-memory transport)', () => {
 
   const invalidCalls: [string, Record<string, unknown>, RegExp][] = [
     ['list_sailings', { from_date: '01/11/2026' }, /from_date/],
+    ['list_sailings', { within_days: -1 }, /within_days/],
+    ['list_sailings', { within_days: 400 }, /within_days/],
+    ['list_sailings', { within_days: 2.5 }, /within_days/],
+    ['list_sailings', { within_days: '14' }, /within_days/],
     ['get_booking', { booking_id: '12345' }, /BK-100001/],
     ['get_booking', {}, /booking_id/],
     ['find_unconfirmed_excursions', { sailing_id: 'cruise-1' }, /AH-CV-261107/],

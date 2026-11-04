@@ -13,7 +13,7 @@ interface Example {
 const EXAMPLES: Example[] = [
   {
     question: 'Which sailings leave in the next two weeks, and how full are they?',
-    calls: [{ tool: 'list_sailings', args: {} }],
+    calls: [{ tool: 'list_sailings', args: { within_days: 14 } }],
   },
   {
     question: 'Run a pre-departure check on the Coral Vista sailing that leaves on 7 November. What must be fixed first?',

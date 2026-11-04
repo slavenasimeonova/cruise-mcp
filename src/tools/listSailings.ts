@@ -1,5 +1,5 @@
 import * as z from 'zod/v4';
-import { isValidIsoDate } from '../lib/dates.js';
+import { addDays, isValidIsoDate } from '../lib/dates.js';
 import { daysToDeparture, isActive, portsOfCall, requireShip, resolveShip, round2 } from '../lib/domain.js';
 import { ToolInputError } from '../lib/errors.js';
 import { defineTool } from './shared.js';
@@ -9,7 +9,8 @@ export const listSailings = defineTool({
   title: 'List sailings',
   description:
     'List Azure Horizon Cruises sailings with dates, itinerary and how full each one is. ' +
-    'Optionally filter by ship and/or earliest departure date. Use the returned sailingId with the other tools.',
+    'Optionally filter by ship, earliest departure date, and/or a window of days from the dataset\'s as-of date ' +
+    '(e.g. within_days: 14 for "the next two weeks"). Use the returned sailingId with the other tools.',
   inputSchema: z.object({
     ship: z
       .string()
@@ -18,10 +19,25 @@ export const listSailings = defineTool({
       .optional()
       .describe('Ship name or code: "Coral Vista" (CV), "Northern Pearl" (NP), "Solenne" (SO), "Sea Lyra" (SL).'),
     from_date: z.iso.date().optional().describe('Only sailings departing on or after this date (YYYY-MM-DD).'),
+    within_days: z
+      .number()
+      .int()
+      .min(0)
+      .max(366)
+      .optional()
+      .describe(
+        "Only sailings departing within this many days of the dataset's as-of date (inclusive), not today's real date. " +
+          'Use 14 for "the next two weeks".',
+      ),
   }),
   outputSchema: z.object({
     asOf: z.string(),
-    filters: z.object({ ship: z.string().nullable(), fromDate: z.string().nullable() }),
+    filters: z.object({
+      ship: z.string().nullable(),
+      fromDate: z.string().nullable(),
+      withinDays: z.number().int().nullable(),
+      toDate: z.string().nullable().describe('Last departure date included by within_days.'),
+    }),
     count: z.number().int(),
     sailings: z.array(
       z.object({
@@ -48,9 +64,16 @@ export const listSailings = defineTool({
     }
     const ship = input.ship === undefined ? undefined : resolveShip(store, input.ship);
     const fromDate = input.from_date;
+    // The window runs from the as-of date to as-of + within_days, both inclusive.
+    const toDate = input.within_days === undefined ? undefined : addDays(store.asOf, input.within_days);
 
     const sailings = store.sailings
-      .filter((s) => (ship === undefined || s.shipId === ship.id) && (fromDate === undefined || s.departureDate >= fromDate))
+      .filter(
+        (s) =>
+          (ship === undefined || s.shipId === ship.id) &&
+          (fromDate === undefined || s.departureDate >= fromDate) &&
+          (toDate === undefined || (s.departureDate >= store.asOf && s.departureDate <= toDate)),
+      )
       .map((s) => {
         const sailingShip = requireShip(store, s);
         const guestsBooked = store
@@ -74,7 +97,11 @@ export const listSailings = defineTool({
         };
       });
 
-    const scope = [ship ? `on ${ship.name}` : 'across the fleet', fromDate ? `departing on or after ${fromDate}` : null]
+    const scope = [
+      ship ? `on ${ship.name}` : 'across the fleet',
+      fromDate ? `departing on or after ${fromDate}` : null,
+      toDate ? `departing within ${input.within_days} days of ${store.asOf} (by ${toDate})` : null,
+    ]
       .filter(Boolean)
       .join(' ');
     const summary =
@@ -84,7 +111,7 @@ export const listSailings = defineTool({
 
     return {
       asOf: store.asOf,
-      filters: { ship: ship?.name ?? null, fromDate: fromDate ?? null },
+      filters: { ship: ship?.name ?? null, fromDate: fromDate ?? null, withinDays: input.within_days ?? null, toDate: toDate ?? null },
       count: sailings.length,
       sailings,
       summary,

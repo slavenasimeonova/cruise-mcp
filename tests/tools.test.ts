@@ -33,6 +33,27 @@ describe('list_sailings', () => {
     expect(out.sailings.every((s) => s.departureDate >= '2027-01-01' && s.ship === 'Solenne')).toBe(true);
   });
 
+  it('limits to departures within N days of the as-of date', () => {
+    const out = listSailings.run(store, { within_days: 14 });
+    expect(out.sailings.map((s) => s.sailingId)).toEqual(['AH-NP-261104', 'AH-CV-261107', 'AH-SO-261110', 'AH-SL-261114']);
+    expect(out.sailings.every((s) => s.daysToDeparture >= 0 && s.daysToDeparture <= 14)).toBe(true);
+    expect(out.filters).toEqual({ ship: null, fromDate: null, withinDays: 14, toDate: '2026-11-15' });
+    expect(out.summary).toBe('4 sailing(s) across the fleet departing within 14 days of 2026-11-01 (by 2026-11-15); next departure AH-NP-261104 on 2026-11-04.');
+  });
+
+  it('treats within_days as inclusive and combines it with the other filters', () => {
+    // AH-SL-261114 departs exactly 13 days out; 12 must exclude it, 13 must include it.
+    expect(listSailings.run(store, { within_days: 12 }).sailings.map((s) => s.sailingId)).not.toContain('AH-SL-261114');
+    expect(listSailings.run(store, { within_days: 13 }).sailings.map((s) => s.sailingId)).toContain('AH-SL-261114');
+    expect(listSailings.run(store, { within_days: 0 }).count).toBe(0);
+    expect(listSailings.run(store, { ship: 'Sea Lyra', within_days: 14 }).sailings.map((s) => s.sailingId)).toEqual(['AH-SL-261114']);
+    expect(listSailings.run(store, { from_date: '2026-11-08', within_days: 14 }).sailings.map((s) => s.sailingId)).toEqual([
+      'AH-SO-261110',
+      'AH-SL-261114',
+    ]);
+    expect(listSailings.run(store, { within_days: 366 }).count).toBe(24);
+  });
+
   it('returns an empty list (not an error) past the end of the schedule', () => {
     const out = listSailings.run(store, { from_date: '2030-01-01' });
     expect(out.count).toBe(0);
